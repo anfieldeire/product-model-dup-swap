@@ -1,0 +1,246 @@
+function clean_data(){
+	
+	// variable to determine all data in the form u_cmdb_duplicate before the script is run
+	var data_clean = 'yes';
+	
+	// any records in table = created = anything
+	var query_string = 'sys_created_onANYTHING'; 
+	
+	if (data_clean == 'yes') {
+		var grd = new GlideRecord('u_product_model_update');
+		grd.addEncodedQuery(query_string);
+		gs.log('Product Model: Clean: Rows: ' + grd.getRowCount());
+		grd.deleteMultiple();
+	
+		}
+	
+} //clean_data();
+
+
+function productmodel_duplicate(){
+
+	// Step 1 - Find duplicate display names and put in an array
+	
+	model_names = [];
+
+	var grw = new GlideAggregate('cmdb_hardware_product_model');	
+	
+	grw.addQuery('display_name', '!=','');
+
+	grw.addAggregate('COUNT', 'display_name');
+	grw.groupBy('display_name');
+	grw.addHaving('COUNT', '>', 1);
+
+	grw.query();
+
+	gs.log("Product Model: print: Dups more than 1: display names: " + grw.getRowCount());
+	
+	while(grw.next()){
+				
+		var display_name = grw.getValue('display_name');	
+		gs.log('Product Model: Name: ' + display_name);
+		
+		model_names.push(display_name);
+		
+	} return model_names;
+	
+}	
+
+
+function product_model_lookup(){
+	
+	// Step 2 - Get the other hw model fields, and push to the temp table
+	
+	model_names = productmodel_duplicate();
+	
+	gs.log('Product Model: length: ' + model_names.length);
+	
+	for (var i=0; i < model_names.length; i++) {	
+
+		
+		gs.log('Product Model: names: ' + model_names[i]);
+		
+		var grd = new GlideRecord('cmdb_hardware_product_model');
+	
+		grd.addQuery('display_name','=', model_names[i]);
+		grd.autoSysFields(false);
+		grd.setWorkflow(false);
+		
+		grd.query();
+		
+		gs.log('Product Model: print: Dups all: Row Count: ' + grd.getRowCount());
+		
+		while(grd.next()){
+			
+			var model_sysid = grd.getValue('sys_id');
+			var display_name = grd.getValue('display_name');
+			var model_name = grd.getValue('name');
+			var manufacturer = grd.getValue('manufacturer');
+			var model_createdby = grd.getValue('sys_created_by');
+			
+			gs.log('Product Model: First: ' + model_sysid);
+			
+			var grc = new GlideRecord('u_product_model_update');
+	
+			grc.initialize();	
+			
+			grc.u_model_sysid = model_sysid;
+			grc.u_display_name = display_name;
+			grc.u_name = model_name;
+			grc.u_manufacturer = manufacturer;
+			grc.u_model_created_by = model_createdby;
+			grc.setValue('u_ci_update', 'no');
+			
+			grc.insert();
+			
+			}
+		
+		}		
+
+}  //product_model_lookup();
+
+
+function update_target_sysids(){
+	// Step 3 - populate the same target sys id on the product models in the temp table, so they can be used for the update later
+	
+	display_names = [];
+
+	var grw = new GlideRecord('u_product_model_update');	
+	grw.addQuery('u_display_name', '!=','');	
+	grw.query();	
+	
+	gs.log('Product Model: First Dup check: ' + grw.getRowCount());
+	
+	while(grw.next()){
+		
+		var model_sysid = grw.getValue('u_model_sysid');
+		gs.log('Product Model: sys: ' + model_sysid);
+
+		var display_name = grw.getValue('u_display_name');
+		gs.log('Product Model: Display Name: ' + display_name);
+		
+		gs.log('Product Model: Cycle Function: For Loop: ');
+		
+		grw1 = new GlideRecord('u_product_model_update');
+		grw1.addQuery('u_display_name', '=', display_name);
+		grw1.setValue('u_target_model_sysid', model_sysid);
+		grw1.updateMultiple();
+
+		gs.log('Product Model: Second Dup check: ' + grw1.getRowCount());
+	}		
+		
+} //update_target_sysids();	
+		
+
+function update_ci_models() { 
+	
+		// Step 4 - find the CIs with the model sysids, and update with the target sysids
+
+		model_ids = [];
+
+		var grm = new GlideRecord('u_product_model_update');
+		
+		grm.addQuery('u_model_sysid', '!=' ,'');
+		grm.addQuery('u_ci_update', '=', 'yes');
+		grm.autoSysFields(false);
+		grm.setWorkflow(false);
+		grm.query();
+	
+		while (grm.next()){
+			
+			var model_sysid = grm.getValue('u_model_sysid');
+			gs.log('Product Model: sysid: ' + model_sysid);
+			
+			var target_modelsysid = grm.u_target_model_sysid;
+			gs.log('Product Model: Targetsysid: ' + target_modelsysid);
+				
+			var grhasci = new GlideRecord('cmdb_ci');
+		
+				grhasci.addEncodedQuery('model_id.sys_id=' + model_sysid);
+				grhasci.autoSysFields(false);
+				grhasci.setWorkflow(false);
+				grhasci.setValue('model_id', target_modelsysid);
+				grhasci.updateMultiple();
+			
+				gs.log('Product Model: CI Found: ' + model_sysid);	
+				gs.log('Product Model: CI Row Count: ' + grhasci.getRowCount());
+
+		}
+}
+update_ci_models();
+
+
+function update_asset_models(){
+	
+		// Step 5 - find the assets with the model sysids, and update with the target sysids
+	
+		model_ids = [];
+
+		var grm1 = new GlideRecord('u_product_model_update');
+		
+		grm1.addQuery('u_model_sysid', '!=' ,'');
+		grm1.addQuery('u_ci_update', '=', 'yes');
+		grm1.autoSysFields(false);
+		grm1.setWorkflow(false);
+		grm1.query();
+	
+		while (grm1.next()){
+			
+			var model_sysid = grm1.getValue('u_model_sysid');
+			gs.log('Product Model: sysid: ' + model_sysid);
+			
+			var target_modelsysid = grm1.u_target_model_sysid;
+			gs.log('Product Model: Targetsysid: ' + target_modelsysid);
+			
+			var grHasAsset = new GlideRecord('alm_hardware');
+		
+				grHasAsset.addEncodedQuery('model.sys_id=' + model_sysid);
+				grHasAsset.autoSysFields(false);
+				grHasAsset.setWorkflow(false);
+				grHasAsset.setValue('model', target_modelsysid);
+				grHasAsset.updateMultiple();
+		
+				gs.log('Product Model: Asset Targetsysid: ' + target_modelsysid);
+		
+				gs.log('Product Model: Asset Found: ' + model_sysid);	
+				gs.log('Product Model: Asset Row Count: ' + grHasAsset.getRowCount());
+				
+			}
+	
+} update_asset_models();
+
+function update_stockroom_models(){
+
+	model_ids = [];
+
+		var grm = new GlideRecord('u_product_model_update');
+		
+		grm.addQuery('u_model_sysid', '!=' ,'');
+		grm.addQuery('u_ci_update', '=', 'yes');
+		grm.autoSysFields(false);
+		grm.setWorkflow(false);
+		grm.query();
+	
+		while (grm.next()){
+			
+			var model_sysid = grm.getValue('u_model_sysid');
+			gs.log('Product Model: sysid: ' + model_sysid);
+			
+			var target_modelsysid = grm.u_target_model_sysid;
+			gs.log('Product Model: Targetsysid: ' + target_modelsysid);
+			
+			var grstock = new GlideRecord('alm_m2m_stockroom_model');
+
+				grstock.addEncodedQuery('model.sys_id=' + model_sysid);
+				grstock.autoSysFields(false);
+				grstock.setWorkflow(false);
+				grstock.setValue('model', target_modelsysid);
+				grstock.updateMultiple();
+		
+				gs.log('Product Model: StockRoom Targetsysid: ' + target_modelsysid);
+		
+				gs.log('Product Model: StockRoom Found: ' + model_sysid);	
+				gs.log('Product Model: StockRoom Row Count: ' + grstock.getRowCount());
+
+	}		
+}  update_stockroom_models();
